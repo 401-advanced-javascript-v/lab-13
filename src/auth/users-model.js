@@ -4,6 +4,13 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
+
+const SINGLE_USE_TOKENS = !!process.env.SINGLE_USE_TOKENS;
+const TOKEN_EXPIRE = process.env.TOKEN_LIFETIME || '5m';
+const SECRET = process.env.SECRET || 'foobar';
+
+const usedTokens = new Set();
+
 const users = new mongoose.Schema({
   username: {type:String, required:true, unique:true},
   password: {type:String, required:true},
@@ -11,13 +18,19 @@ const users = new mongoose.Schema({
   role: {type: String, default:'user', enum: ['admin','editor','user']},
 });
 
+const capabilities = {
+  admin: ['create','read','update','delete'],
+  editor: ['create', 'read', 'update'],
+  user: ['read'],
+};
+
 users.pre('save', function(next) {
   bcrypt.hash(this.password, 10)
     .then(hashedPassword => {
       this.password = hashedPassword;
       next();
     })
-    .catch(console.error);
+    .catch(error => {throw new Error(error);});
 });
 
 users.statics.createFromOauth = function(email) {
@@ -27,11 +40,9 @@ users.statics.createFromOauth = function(email) {
   return this.findOne( {email} )
     .then(user => {
       if( !user ) { throw new Error('User Not Found'); }
-      console.log('Welcome Back', user.username);
       return user;
     })
     .catch( error => {
-      console.log('Creating new user');
       let username = email;
       let password = 'none';
       return this.create({username, password, email});
@@ -39,12 +50,20 @@ users.statics.createFromOauth = function(email) {
 
 };
 
-users.statics.authenticateBearer = function( token) {
-  let parsedToken = jwt.verify( token, process.env.SECRET) ;
-  console.log(parsedToken);
-  let id = parsedToken.id;
-  return this.findOne( { _id:id } );
-}
+users.statics.authenticateToken = function(token) {
+  
+  if ( usedTokens.has(token ) ) {
+    return Promise.reject('Invalid Token');
+  }
+  
+  try {
+    let parsedToken = jwt.verify(token, SECRET);
+    (SINGLE_USE_TOKENS) && parsedToken.type !== 'key' && usedTokens.add(token);
+    let query = {_id: parsedToken.id};
+    return this.findOne(query);
+  } catch(e) { throw new Error('Invalid Token'); }
+  
+};
 
 users.statics.authenticateBasic = function(auth) {
   let query = {username:auth.username};
@@ -58,38 +77,28 @@ users.methods.comparePassword = function(password) {
     .then( valid => valid ? this : null);
 };
 
-users.methods.generateToken = function() {
+users.methods.generateToken = function(type) {
   
   let token = {
     id: this._id,
-    role: this.role,
+    capabilities: capabilities[this.role],
+    type: type || 'user',
   };
-
-  let tokenOptions = {
-    expiresIn: '15min', 
-    algorithm:  'HS256', 
-  };
-
-  return jwt.sign(token, process.env.SECRET, tokenOptions);
+  
+  let options = {};
+  if ( type !== 'key' && !! TOKEN_EXPIRE ) { 
+    options = { expiresIn: TOKEN_EXPIRE };
+  }
+  
+  return jwt.sign(token, SECRET, options);
 };
 
+users.methods.can = function(capability) {
+  return capabilities[this.role].includes(capability);
+};
 
-/**
- * Method to generate an access token key
- * @method 
- */
-users.methods.generateTokenKey = function() {
-  let token = {
-    id: this._id,
-    role: this.role,
-  };
-
-  let tokenOptions = {
-    algorithm: 'HS256',
-    //does not expire
-  };
-
-  return jwt.sign(token, process.env.SECRET, tokenOptions);
+users.methods.generateKey = function() {
+  return this.generateToken('key');
 };
 
 module.exports = mongoose.model('users', users);

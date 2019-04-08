@@ -21,7 +21,7 @@
 
 #### Running the app
 * First tab
-    * mongod --dbpath=/Users/erintrainor/codefellows/data/db 
+    * mongod --dbpath=/Users/vanessa/codefellows/data/db 
 * Second tab
     * mongo
 * Third tab
