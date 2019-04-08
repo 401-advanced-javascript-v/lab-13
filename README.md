@@ -7,7 +7,7 @@
 
 ### Links and Resources
 * [repo]()
-* [travis]()
+* [travis](./travis.png)
 * [back-end](https://git.heroku.com/whispering-mesa-54203.git)
 
 #### Documentation
